@@ -1,4 +1,4 @@
-package dynlb_test
+package lb_test
 
 import (
 	"context"
@@ -7,16 +7,16 @@ import (
 	"testing"
 	"time"
 
-	dynlb "github.com/podocarp/dynlb/src"
+	"github.com/podocarp/dynlb-go/lb"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/time/rate"
 )
 
-func NewDownstreams(rates ...int) []dynlb.Handler[int, int] {
-	downstreams := make([]dynlb.Handler[int, int], len(rates))
+func NewDownstreams(rates ...int) []lb.Handler[int, int] {
+	downstreams := make([]lb.Handler[int, int], len(rates))
 	for i, r := range rates {
 		rateLimit := rate.NewLimiter(rate.Limit(r), 1)
-		downstreams[i] = dynlb.Handler[int, int]{
+		downstreams[i] = lb.Handler[int, int]{
 			EstCap: 0,
 			Dispatch: func(ctx context.Context, param int) (int, error) {
 				err := rateLimit.Wait(ctx)
@@ -38,7 +38,7 @@ func TestGenericWeightedRoundRobin(t *testing.T) {
 	// time to run the test for, the longer the more accurate it is
 	secondsToRun := 5
 
-	rr := dynlb.NewWeightedRoundRobin(rates...)
+	rr := lb.NewWeightedRoundRobin(rates...)
 
 	downstreams := NewDownstreams(rates...)
 	completions := make([]*atomic.Int32, len(rates))

@@ -1,4 +1,4 @@
-package dynlb
+package lb
 
 type weightedRoundRobin struct {
 	weights   []int // cap of each node divided by total cap, rounded

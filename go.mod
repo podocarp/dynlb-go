@@ -1,4 +1,4 @@
-module github.com/podocarp/dynlb
+module github.com/podocarp/dynlb-go
 
 go 1.23.9
 

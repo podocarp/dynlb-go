@@ -1,4 +1,4 @@
-package dynlb_test
+package lb_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	dynlb "github.com/podocarp/dynlb/src"
+	"github.com/podocarp/dynlb-go/lb"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/time/rate"
 )
@@ -22,7 +22,7 @@ func TestEstWeightsImprove(t *testing.T) {
 	acceptableDelta := 10.0 // percentage points
 
 	downstreams := NewDownstreams(rates...)
-	lb := dynlb.NewLoadBalancer(downstreams...)
+	lb := lb.NewLoadBalancer(downstreams...)
 	lb.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,15 +59,15 @@ L:
 	}
 }
 
-func NewDownstreamsThatError(rates ...int) []dynlb.Handler[int, int] {
-	downstreams := make([]dynlb.Handler[int, int], len(rates))
+func NewDownstreamsThatError(rates ...int) []lb.Handler[int, int] {
+	downstreams := make([]lb.Handler[int, int], len(rates))
 	for i, r := range rates {
 		rateLimit := rate.NewLimiter(rate.Limit(r), 1)
-		downstreams[i] = dynlb.Handler[int, int]{
+		downstreams[i] = lb.Handler[int, int]{
 			EstCap: 0,
 			Dispatch: func(ctx context.Context, param int) (int, error) {
 				if !rateLimit.Allow() {
-					return 0, dynlb.ErrExceedCap
+					return 0, lb.ErrExceedCap
 				}
 				err := rateLimit.Wait(ctx)
 				if err != nil {
@@ -93,7 +93,7 @@ func TestErrBackoff(t *testing.T) {
 	acceptableDelta := 20.0 // percentage points
 
 	downstreams := NewDownstreamsThatError(rates...)
-	lb := dynlb.NewLoadBalancer(downstreams...)
+	lb := lb.NewLoadBalancer(downstreams...)
 	lb.BackoffUnit = 10 * time.Millisecond
 	lb.BackoffMaxExponent = 5
 	lb.UpdateInterval = 1000 * time.Millisecond
