@@ -26,14 +26,14 @@ go get github.com/podocarp/dynlb-go
 
 First you might want to define a few handlers.
 ```
-	handlers := make([]lb.Handler[int, int], n)
+handlers := make([]lb.Handler[int, int], n)
 
-  handlers[i] = lb.Handler[int, int]{
-    EstCap:   1,
-    Dispatch: func(ctx context.Context, param int) {
-      // some long winded computation/fetch your apis/whatever
-    },
-  }
+handlers[i] = lb.Handler[int, int]{
+	EstCap:   1,
+	Dispatch: func(ctx context.Context, param int) {
+	// some long winded computation/fetch your apis/whatever
+},
+}
 ```
 Then register your handlers with the load balancer and start the lb.
 ```
