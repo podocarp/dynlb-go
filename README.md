@@ -3,6 +3,8 @@
 This is a simple adaptive weighted round robin load balancer for golang.
 It tries to guess the actual weights of the handlers you throw at it instead of you having to configure statically pre-known values.
 
+View the latest docs on [pkg.go.dev](https://pkg.go.dev/github.com/podocarp/dynlb-go/lb).
+
 ## Getting started
 
 ```
