@@ -1,4 +1,4 @@
-package lb_test
+package rr_test
 
 import (
 	"context"
@@ -7,29 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/podocarp/dynlb-go/lb"
+	"github.com/podocarp/dynlb-go/internal/rr"
+	"github.com/podocarp/dynlb-go/internal/utils"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/time/rate"
 )
-
-func NewDownstreams(rates ...int) []lb.Handler[int, int] {
-	downstreams := make([]lb.Handler[int, int], len(rates))
-	for i, r := range rates {
-		rateLimit := rate.NewLimiter(rate.Limit(r), 1)
-		downstreams[i] = lb.Handler[int, int]{
-			EstCap: 0,
-			Dispatch: func(ctx context.Context, param int) (int, error) {
-				err := rateLimit.Wait(ctx)
-				if err != nil {
-					return 0, err
-				}
-				return param, nil
-			},
-		}
-	}
-
-	return downstreams
-}
 
 func TestGenericWeightedRoundRobin(t *testing.T) {
 	// put target rates into this array, too high a rate may lead to
@@ -38,9 +19,9 @@ func TestGenericWeightedRoundRobin(t *testing.T) {
 	// time to run the test for, the longer the more accurate it is
 	secondsToRun := 5
 
-	rr := lb.NewWeightedRoundRobin(rates...)
+	roundRobin := rr.NewWeightedRoundRobin(rates...)
 
-	downstreams := NewDownstreams(rates...)
+	downstreams := utils.NewRateLimitedDownstreams(rates...)
 	completions := make([]*atomic.Int32, len(rates))
 	for i := range rates {
 		completions[i] = &atomic.Int32{}
@@ -58,7 +39,7 @@ L:
 			break L
 		default:
 			wg.Add(1)
-			i := rr.Dispatch()
+			i := roundRobin.Dispatch()
 			go func() {
 				defer wg.Done()
 				if _, err := downstreams[i].Dispatch(ctx, i); err == nil {

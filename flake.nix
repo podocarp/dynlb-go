@@ -15,6 +15,7 @@
           nativeBuildInputs = with pkgs; [
             go_1_23
             gopls
+            gotools
           ];
           shellHook = ''
             for p in $NIX_PROFILES; do

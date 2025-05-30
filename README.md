@@ -2,21 +2,6 @@
 
 This is a simple adaptive weighted round robin load balancer for golang.
 It tries to guess the actual weights of the handlers you throw at it instead of you having to configure statically pre-known values.
-Right now this does not provide rate limiting despite knowing the actual rates. This is a planned feature.
-
-A super simple demo is available that shows the rebalancing between two handlers with different rate limits:
-```
-$ go run ./cmd/demo/
-curr weights [50 50]
-curr weights [39 60]
-curr weights [35 64]
-curr weights [39 60]
-curr weights [35 64]
-curr weights [26 73]
-curr weights [31 68]
-curr weights [26 73]
-^Cslow handler called 9 times, fast handler called 21 times
-```
 
 ## Getting started
 
@@ -42,3 +27,13 @@ lb.Start()
 ```
 Dispatch calls to any of the handlers with `lb.Dispatch`.
 After you're done, you can clean up with `lb.Destroy`.
+
+## Notes
+
+- If you can't get close to full saturation on your downstreams, it doesn't really
+matter. For example if your endpoints in total can handle 1k qps but you're only
+sending 10qps, the weights aren't going to change that much. This is like using
+a splitter to balance a single belt in Factorio, it doesn't work well unless its
+getting backed up.
+- There is no rate limiting on top of the load balancer. This is something
+that's very easy with golang's `rate` package.

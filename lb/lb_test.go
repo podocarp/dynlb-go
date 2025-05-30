@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/podocarp/dynlb-go/internal/utils"
+
 	"github.com/podocarp/dynlb-go/lb"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/time/rate"
 )
 
 // Tests that the estimated weights slowly converge to the actual rate.
@@ -21,7 +22,7 @@ func TestEstWeightsImprove(t *testing.T) {
 	secondsToRun := 5
 	acceptableDelta := 10.0 // percentage points
 
-	downstreams := NewDownstreams(rates...)
+	downstreams := utils.NewRateLimitedDownstreams(rates...)
 	lb := lb.NewLoadBalancer(downstreams...)
 	lb.Start()
 
@@ -59,28 +60,6 @@ L:
 	}
 }
 
-func NewDownstreamsThatError(rates ...int) []lb.Handler[int, int] {
-	downstreams := make([]lb.Handler[int, int], len(rates))
-	for i, r := range rates {
-		rateLimit := rate.NewLimiter(rate.Limit(r), 1)
-		downstreams[i] = lb.Handler[int, int]{
-			EstCap: 0,
-			Dispatch: func(ctx context.Context, param int) (int, error) {
-				if !rateLimit.Allow() {
-					return 0, lb.ErrExceedCap
-				}
-				err := rateLimit.Wait(ctx)
-				if err != nil {
-					return 0, err
-				}
-				return param, nil
-			},
-		}
-	}
-
-	return downstreams
-}
-
 // In this test the handlers'  rate limiting doesn't block but instead return an
 // error when the rate limit is exceeded. In this case we can still learn the
 // approximate weights but slower.
@@ -92,7 +71,7 @@ func TestErrBackoff(t *testing.T) {
 	secondsToRun := 5
 	acceptableDelta := 20.0 // percentage points
 
-	downstreams := NewDownstreamsThatError(rates...)
+	downstreams := utils.NewDownstreamsThatError(rates...)
 	lb := lb.NewLoadBalancer(downstreams...)
 	lb.BackoffUnit = 10 * time.Millisecond
 	lb.BackoffMaxExponent = 5

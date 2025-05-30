@@ -6,15 +6,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/podocarp/dynlb-go/internal/rr"
 )
 
+type HandlerFunc[T any, U any] func(context.Context, T) (U, error)
+
+// A handler (or downstream) for the load balancer. When [LoadBalancer.Dispatch]
+// is called, it will choose an appropriate handler and call the the supplied
+// Dispatch function.
 type Handler[T any, U any] struct {
 	// Estimated capacity of this handler, units of tasks per second
 	EstCap float64
 	// Dispatch function called when this handler is chosen
-	Dispatch func(context.Context, T) (U, error)
+	Dispatch HandlerFunc[T, U]
 }
 
+// Configuration for the load balancer. Should not be changed after you call
+// [LoadBalancer.Start], it will cause data races.
 type Config struct {
 	// Exponential backoff highest exponent. Defaults to 10. This means a
 	// max of 2^10 * Unit.
@@ -37,9 +46,9 @@ type Config struct {
 type LoadBalancer[T any, U any] struct {
 	Config
 
-	*weightedRoundRobin
+	*rr.WeightedRoundRobin
 
-	dispatch []func(context.Context, T) (U, error)
+	dispatch []HandlerFunc[T, U]
 	calls    []atomic.Int32 // counter of tasks run successfully each tick
 	caps     []float64      // estimated capacity of each handler, units of tasks per second
 	totalCap float64        // sum of all caps
@@ -51,15 +60,13 @@ type LoadBalancer[T any, U any] struct {
 func NewLoadBalancer[T any, U any](handlers ...Handler[T, U]) *LoadBalancer[T, U] {
 	n := len(handlers)
 	lb := LoadBalancer[T, U]{
-		dispatch: make([]func(context.Context, T) (U, error), n),
-		calls:    make([]atomic.Int32, n),
-		caps:     make([]float64, n),
-		totalCap: 0,
-		mut:      sync.Mutex{},
-		done:     make(chan struct{}, 2),
-		weightedRoundRobin: &weightedRoundRobin{
-			weights: make([]int, n),
-		},
+		dispatch:           make([]HandlerFunc[T, U], n),
+		calls:              make([]atomic.Int32, n),
+		caps:               make([]float64, n),
+		totalCap:           0,
+		mut:                sync.Mutex{},
+		done:               make(chan struct{}, 2),
+		WeightedRoundRobin: rr.NewWeightedRoundRobin(make([]int, n)),
 		Config: Config{
 			BackoffMaxExponent: 10,
 			BackoffUnit:        100 * time.Millisecond,
@@ -128,15 +135,12 @@ func (l *LoadBalancer[T, U]) updateWeights() {
 	for _, c := range l.caps {
 		l.totalCap += c
 	}
-	maxWeight := 0
+	newWeights := make([]int, len(l.dispatch))
 	for i, c := range l.caps {
 		weight := int(c / l.totalCap * 100)
-		l.weights[i] = weight
-		if weight > maxWeight {
-			maxWeight = weight
-		}
+		newWeights[i] = weight
 	}
-	l.rounds = maxWeight
+	l.UpdateWeights(newWeights)
 }
 
 // Return this error to signal that the function has been called too quickly,
@@ -175,7 +179,7 @@ L:
 // Tries to call one of the available handlers.
 func (l *LoadBalancer[T, U]) Dispatch(ctx context.Context, param T) (U, error) {
 	l.mut.Lock()
-	index := l.weightedRoundRobin.Dispatch()
+	index := l.WeightedRoundRobin.Dispatch()
 	l.mut.Unlock()
 
 	return l.tryDispatch(ctx, param, index)
@@ -184,5 +188,5 @@ func (l *LoadBalancer[T, U]) Dispatch(ctx context.Context, param T) (U, error) {
 // Returns the currently used weights. Doesn't really mean much, but useful for
 // testing/debugging.
 func (l *LoadBalancer[T, U]) GetWeights() []int {
-	return l.weights
+	return l.WeightedRoundRobin.GetWeights()
 }
