@@ -19,7 +19,7 @@ func TestGenericWeightedRoundRobin(t *testing.T) {
 	// time to run the test for, the longer the more accurate it is
 	secondsToRun := 5
 
-	roundRobin := rr.NewWeightedRoundRobin(rates...)
+	roundRobin := rr.NewWeightedRoundRobin(rates)
 
 	downstreams := utils.NewRateLimitedDownstreams(rates...)
 	completions := make([]*atomic.Int32, len(rates))

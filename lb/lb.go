@@ -3,6 +3,7 @@ package lb
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,22 +26,17 @@ type Handler[T any, U any] struct {
 // Configuration for the load balancer. Should not be changed after you call
 // [LoadBalancer.Start], it will cause data races.
 type Config struct {
-	// Exponential backoff highest exponent. Defaults to 10. This means a
-	// max of 2^10 * Unit.
 	BackoffMaxExponent int
-	// Exponential backoff unit. Defaults to 100ms. With the default backoff
-	// this gives a max backoff of 1.7 minutes.
-	BackoffUnit time.Duration
+	BackoffUnit        time.Duration
+	UpdateInterval     time.Duration
+	SmoothingFactor    float64
 
-	// Interval in which weights are refreshed. Defaults to one second.
-	// Higher intervals make the weights converge faster but also cause a
-	// little more latency from mutex locks
-	UpdateInterval time.Duration
-
-	// A smoothing factor in [0, 1], defaults to 0.8. Larger values means
-	// new estimates are valued more than old values, which causes updates
-	// to be faster but may cause fluctuations/jitter.
-	SmoothingFactor float64
+	// Exploration rate for ε-greedy algorithm
+	ExplorationRate float64
+	// Additive increase amount for AIMD
+	AIMDIncrease float64
+	// Multiplicative decrease factor for AIMD
+	AIMDDecreaseFactor float64
 }
 
 type LoadBalancer[T any, U any] struct {
@@ -48,10 +44,11 @@ type LoadBalancer[T any, U any] struct {
 
 	*rr.WeightedRoundRobin
 
-	dispatch []HandlerFunc[T, U]
-	calls    []atomic.Int32 // counter of tasks run successfully each tick
-	caps     []float64      // estimated capacity of each handler, units of tasks per second
-	totalCap float64        // sum of all caps
+	dispatch   []HandlerFunc[T, U]
+	calls      []atomic.Int32 // counter of tasks run successfully each tick
+	rejections []atomic.Int32 // counter of ErrExceedCap each tick
+	caps       []float64      // estimated capacity of each handler, units of tasks per second
+	totalCap   float64        // sum of all caps
 
 	mut  sync.Mutex
 	done chan struct{}
@@ -62,6 +59,7 @@ func NewLoadBalancer[T any, U any](handlers ...Handler[T, U]) *LoadBalancer[T, U
 	lb := LoadBalancer[T, U]{
 		dispatch:           make([]HandlerFunc[T, U], n),
 		calls:              make([]atomic.Int32, n),
+		rejections:         make([]atomic.Int32, n),
 		caps:               make([]float64, n),
 		totalCap:           0,
 		mut:                sync.Mutex{},
@@ -71,7 +69,10 @@ func NewLoadBalancer[T any, U any](handlers ...Handler[T, U]) *LoadBalancer[T, U
 			BackoffMaxExponent: 10,
 			BackoffUnit:        100 * time.Millisecond,
 			UpdateInterval:     time.Second,
-			SmoothingFactor:    0.8,
+			SmoothingFactor:    0.5,
+			ExplorationRate:    0.1,
+			AIMDIncrease:       0.1,
+			AIMDDecreaseFactor: 0.9,
 		},
 	}
 
@@ -119,12 +120,32 @@ func (l *LoadBalancer[T, U]) Destroy() {
 func (l *LoadBalancer[T, U]) updateLoads() {
 	for i := range l.calls {
 		calls := l.calls[i].Load()
-		if calls == 0 {
-			continue
+		rejects := l.rejections[i].Load()
+
+		// AIMD: additive increase for successes
+		if calls > 0 {
+			l.caps[i] += l.AIMDIncrease
 		}
-		estCap := float64(calls) / l.UpdateInterval.Seconds()
-		l.caps[i] = l.SmoothingFactor*estCap + (1-l.SmoothingFactor)*l.caps[i]
+
+		// AIMD: multiplicative decrease for rejections
+		if rejects > 0 {
+			l.caps[i] *= l.AIMDDecreaseFactor
+		}
+
+		// Exponential smoothing for observed rate
+		if calls > 0 || rejects > 0 {
+			estCap := float64(calls) / l.UpdateInterval.Seconds()
+			l.caps[i] = l.SmoothingFactor*estCap + (1-l.SmoothingFactor)*l.caps[i]
+		}
+
+		// Decay for idle handlers to prevent starvation
+		if calls == 0 && rejects == 0 {
+			l.caps[i] *= 0.99
+		}
+
+		l.caps[i] = max(l.caps[i], 0.1)
 		l.calls[i].Store(0)
+		l.rejections[i].Store(0)
 	}
 }
 
@@ -166,6 +187,7 @@ L:
 			if !errors.Is(err, ErrExceedCap) {
 				break L
 			}
+			l.rejections[index].Add(1)
 			l.backoff(attempts)
 			attempts++
 		}
@@ -179,7 +201,12 @@ L:
 // Tries to call one of the available handlers.
 func (l *LoadBalancer[T, U]) Dispatch(ctx context.Context, param T) (U, error) {
 	l.mut.Lock()
-	index := l.WeightedRoundRobin.Dispatch()
+	var index int
+	if l.ExplorationRate > 0 && len(l.dispatch) > 1 && rand.Float64() < l.ExplorationRate {
+		index = rand.Intn(len(l.dispatch))
+	} else {
+		index = l.WeightedRoundRobin.Dispatch()
+	}
 	l.mut.Unlock()
 
 	return l.tryDispatch(ctx, param, index)
